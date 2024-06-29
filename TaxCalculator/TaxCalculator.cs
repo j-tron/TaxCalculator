@@ -1,11 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace TaxCalculator;
+﻿namespace TaxCalculator;
 
 /// <summary>
 /// This is the public inteface used by our client and may not be changed
@@ -26,31 +19,25 @@ public interface ITaxCalculator
 /// TODO: We know there are a few bugs in the code below, since the calculations look messed up every now and then.
 ///       There are also a number of things that have to be implemented.
 /// </summary>
-public class TaxCalculator : ITaxCalculator
+public class TaxCalculator(TimeProvider? timeProvider = null) : ITaxCalculator
 {
+    private readonly Dictionary<Commodity, SortedList<RateTimeStamp, double>> _timestampRates = [];
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     /// <summary>
     /// Get the standard tax rate for a specific commodity.
     /// </summary>
-    public double GetStandardTaxRate(Commodity commodity)
+    public double GetStandardTaxRate(Commodity commodity) => commodity switch
     {
-        if (commodity == Commodity.Default)
-            return 0.25;
-        if (commodity == Commodity.Alcohol)
-            return 0.25;
-        if (commodity == Commodity.Food)
-            return 0.12;
-        if (commodity == Commodity.FoodServices)
-            return 0.12;
-        if (commodity == Commodity.Literature)
-            return 0.6;
-        if (commodity == Commodity.Transport)
-            return 0.6;
-        if (commodity == Commodity.CulturalServices)
-            return 0.6;
-
-        return 0.25;
-    }
+        Commodity.Default => 0.25,
+        Commodity.Alcohol => 0.25,
+        Commodity.Food => 0.12,
+        Commodity.FoodServices => 0.12,
+        Commodity.Literature => 0.6,
+        Commodity.Transport => 0.6,
+        Commodity.CulturalServices => 0.6,
+        _ => 0.25
+    };
 
 
     /// <summary>
@@ -60,13 +47,21 @@ public class TaxCalculator : ITaxCalculator
     /// </summary>
     public void SetCustomTaxRate(Commodity commodity, double rate)
     {
-        //TODO: support saving multiple custom rates for different combinations of Commodity/DateTime
-        //TODO: make sure we never save duplicates, in case of e.g. clock resets, DST etc - overwrite old values if this happens
-        _customRates[commodity] = Tuple.Create(DateTime.Now, rate);
+
+        ArgumentOutOfRangeException.ThrowIfNegative(rate);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(rate, 1);
+        var currentTime = _timeProvider.GetUtcNow();
+
+        if (_timestampRates.TryGetValue(commodity, out var timeStampList)
+            && !timeStampList.TryAdd(new(currentTime), rate))
+        {
+            timeStampList[new(currentTime)] = rate;
+        }
+        else
+        {
+            _timestampRates.TryAdd(commodity, new SortedList<RateTimeStamp, double> { { new(currentTime), rate } });
+        }
     }
-
-    private static readonly Dictionary<Commodity, Tuple<DateTime, double>> _customRates = [];
-
 
     /// <summary>
     /// Gets the tax rate that is active for a specific point in time (in UTC).
@@ -75,8 +70,27 @@ public class TaxCalculator : ITaxCalculator
     /// </summary>
     public double GetTaxRateForDateTime(Commodity commodity, DateTime date)
     {
-        //TODO: implement
-        throw new NotImplementedException();
+        var utcDate = date.ToUniversalTime();
+        if (_timestampRates.TryGetValue(commodity, out var timestampList)
+            && timestampList.TryGetValue(new(utcDate), out var taxRate))
+        {
+            return taxRate;
+        }
+        return GetStandardTaxRate(commodity);
+    }
+    public record RateTimeStamp(DateTimeOffset TimeStamp) : IComparable<RateTimeStamp>
+    {
+        public int CompareTo(RateTimeStamp? date)
+        {
+            if (date == null) return 1;
+
+            if (Math.Abs((TimeStamp - date.TimeStamp).TotalSeconds) < 1)
+            {
+                return 0;
+            }
+
+            return DateTime.Compare(TimeStamp.DateTime, date.TimeStamp.DateTime);
+        }
     }
 
     /// <summary>
@@ -86,8 +100,12 @@ public class TaxCalculator : ITaxCalculator
     /// </summary>
     public double GetCurrentTaxRate(Commodity commodity)
     {
-        //TODO: implement
-        throw new NotImplementedException();
+        if (_timestampRates.TryGetValue(commodity, out var timestampList))
+        {
+            return timestampList.Last().Value;
+        }
+
+        return GetStandardTaxRate(commodity);
     }
 
 }
