@@ -87,9 +87,12 @@ public class SetCustomTaxRateTests
 
         timeProviderMock.Setup(x => x.GetUtcNow()).Returns(utcNow);
         sut.SetCustomTaxRate(commodity, expected);
-        timeProviderMock.Setup(x => x.GetUtcNow()).Returns(utcNow.AddHours(-1));
+        timeProviderMock.Setup(x => x.GetUtcNow()).Returns(utcNow.AddHours(-1)); //this tax rate should be stored before expected value
         sut.SetCustomTaxRate(commodity, 0.1);
-
+        timeProviderMock.Setup(x => x.GetUtcNow()).Returns(utcNow.AddHours(1)); //this tax rate should be stored after expected value
+        sut.SetCustomTaxRate(commodity, 0.2);
+        //set the current time as if 1 minute has passed.
+        timeProviderMock.Setup(x => x.GetUtcNow()).Returns(utcNow.AddMinutes(1)); //1 minute after expected tax rate has been stored
         //act
         var actual = sut.GetCurrentTaxRate(commodity);
 

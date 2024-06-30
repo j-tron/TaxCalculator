@@ -21,7 +21,7 @@ public interface ITaxCalculator
 /// </summary>
 public class TaxCalculator(TimeProvider? timeProvider = null) : ITaxCalculator
 {
-    private readonly Dictionary<Commodity, SortedList<RateTimeStamp, double>> _timestampRates = [];
+    private readonly Dictionary<Commodity, SortedList<CustomTaxTimeStamp, double>> _commodityTaxRates = [];
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     /// <summary>
@@ -47,19 +47,20 @@ public class TaxCalculator(TimeProvider? timeProvider = null) : ITaxCalculator
     /// </summary>
     public void SetCustomTaxRate(Commodity commodity, double rate)
     {
-
         ArgumentOutOfRangeException.ThrowIfNegative(rate);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(rate, 1);
         var currentTime = _timeProvider.GetUtcNow();
 
-        if (_timestampRates.TryGetValue(commodity, out var timeStampList)
-            && !timeStampList.TryAdd(new(currentTime), rate))
+        if (_commodityTaxRates.TryGetValue(commodity, out var customTaxTimeStamps))
         {
-            timeStampList[new(currentTime)] = rate;
+            if (!customTaxTimeStamps.TryAdd(new(currentTime), rate))
+            {
+                customTaxTimeStamps[new(currentTime)] = rate;
+            }
         }
         else
         {
-            _timestampRates.TryAdd(commodity, new SortedList<RateTimeStamp, double> { { new(currentTime), rate } });
+            _commodityTaxRates.TryAdd(commodity, new SortedList<CustomTaxTimeStamp, double> { { new(currentTime), rate } });
         }
     }
 
@@ -70,27 +71,18 @@ public class TaxCalculator(TimeProvider? timeProvider = null) : ITaxCalculator
     /// </summary>
     public double GetTaxRateForDateTime(Commodity commodity, DateTime date)
     {
-        var utcDate = date.ToUniversalTime();
-        if (_timestampRates.TryGetValue(commodity, out var timestampList)
-            && timestampList.TryGetValue(new(utcDate), out var taxRate))
+        if (_commodityTaxRates.TryGetValue(commodity, out var customTaxTimeStamps))
         {
-            return taxRate;
-        }
-        return GetStandardTaxRate(commodity);
-    }
-    public record RateTimeStamp(DateTimeOffset TimeStamp) : IComparable<RateTimeStamp>
-    {
-        public int CompareTo(RateTimeStamp? date)
-        {
-            if (date == null) return 1;
-
-            if (Math.Abs((TimeStamp - date.TimeStamp).TotalSeconds) < 1)
+            foreach (var item in customTaxTimeStamps)
             {
-                return 0;
+                if (item.Key.TimeStamp.DateTime.CompareTo(date) <= 0)
+                {
+                    return item.Value;
+                }
             }
-
-            return DateTime.Compare(TimeStamp.DateTime, date.TimeStamp.DateTime);
         }
+
+        return GetStandardTaxRate(commodity);
     }
 
     /// <summary>
@@ -100,14 +92,8 @@ public class TaxCalculator(TimeProvider? timeProvider = null) : ITaxCalculator
     /// </summary>
     public double GetCurrentTaxRate(Commodity commodity)
     {
-        if (_timestampRates.TryGetValue(commodity, out var timestampList))
-        {
-            return timestampList.Last().Value;
-        }
-
-        return GetStandardTaxRate(commodity);
+        return GetTaxRateForDateTime(commodity, _timeProvider.GetUtcNow().DateTime);
     }
-
 }
 
 public enum Commodity
@@ -120,4 +106,19 @@ public enum Commodity
     Literature,         //6%
     Transport,          //6%
     CulturalServices    //6%
+}
+
+public record CustomTaxTimeStamp(DateTimeOffset TimeStamp) : IComparable<CustomTaxTimeStamp>
+{
+    public int CompareTo(CustomTaxTimeStamp? date)
+    {
+        if (date == null) return 1;
+
+        if (Math.Abs((TimeStamp - date.TimeStamp).TotalSeconds) < 1)
+        {
+            return 0;
+        }
+
+        return DateTime.Compare(TimeStamp.DateTime, date.TimeStamp.DateTime) * -1; //reverse order to latest date first
+    }
 }
